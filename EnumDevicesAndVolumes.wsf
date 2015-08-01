@@ -142,6 +142,8 @@ version 02 continued from 02.00 till 02.154 at June 18 2015
                         constructor as no one method of this class can be run untill
                         constructor finished, June 19, version number incremented.
 "02.155 June 19 2015"   Output bufferization can be enabled by the caller, June 23
+"02.156 June 23 2015"   Method RegGetEnumValues implemented at July 27
+"02.157 Julye 27 2015"  parseInt( CurrentVersionObject.CurrentBuild ) implemented at July 28
 */
    this.OutBuffers = null; // June 23, implemented
 
@@ -154,7 +156,7 @@ version 02 continued from 02.00 till 02.154 at June 18 2015
       ServerName = "."; // local machine
    }
 
-   var Version = "02.156 June 23 2015";
+   var Version = "02.158 July 28 2015";
 
    this.GetVersion = function()
    {
@@ -666,7 +668,7 @@ version 02 continued from 02.00 till 02.154 at June 18 2015
    RegGetValue(
       [in] { "name:" vName, "type": vType }
    );
-   [out] - depends on the type of the value withe given name
+   [out] - depends on the type of the value with given name
    ---------------------------------------------------------
    */
    this.RegGetValue = function( root, regPath, valueObj )
@@ -681,6 +683,7 @@ version 02 continued from 02.00 till 02.154 at June 18 2015
          case REG_BINARY:   { val = this.RegGetBinaryValue(         root, regPath, name ); break; }
          case REG_DWORD:    { val = this.RegGetDWORDValue(          root, regPath, name ); break; }
          case REG_QWORD:    { val = this.RegGetQWORDValue(          root, regPath, name ); break; }
+         case REG_FULL_RESOURCE_DESCRIPTOR: { val = this.RegGetBinaryValue( root, regPath, name ); break; }
       }
 
       return { "name": name, "type": InterpreteRegValueType[ type ], "value": val };
@@ -705,6 +708,40 @@ version 02 continued from 02.00 till 02.154 at June 18 2015
       return res;
    }
 
+   /*
+   ----------------------------------------------------------------------
+   RegGetEnumValues( root, regPath )
+   Special case of the RegGetAllValues( root, regPath ) which reads
+   all values of Enumeration of the objects. In this case REG_DWORD
+   with a name Count is read at first and then in the loop [0-Count-1]
+   RegSZ values with a names i.toString() are read one by one and
+   values are placed into an output array. If the value read conrains
+   "" than such a value is not placed into the output array. Likewise
+   values are present in enumerations of the objects in Windows 9600-.
+   ----------------------------------------------------------------------
+   */
+   this.RegGetEnumValues = function( root, regPath, flag )
+   {
+      var Count = this.RegGetDWORDValue( root, regPath, "Count" );
+      if ( typeof( flag ) == "undefined" )
+      {
+         flag = false;
+      }
+
+      var res = [], val;
+
+      for ( var i = 0; i < Count; i++ )
+      {
+         val = this.RegGetStringValue( root, regPath, i.toString() );
+
+         if ( ! flag )
+         {
+            if ( val.indexOf( "LEGACY_" ) > - 1 ) continue;
+         }
+         res[ res.length ] = val;
+      }
+      return res;
+   }
    //
    // this method converts registry REG_DWORD date to
    // standard JS Date object and returns it.
@@ -825,10 +862,15 @@ Final:  Mon Oct  1 12:52:24 UTC+0300 2103 input=130722771302765282 for conversio
    // "ProductName"="Windows 10 Pro Insider Preview", "CurrentBuildNumber"="10130",
    // "BuildLab"="10130.fbl_impressive.150522-2224"
    //
+   // CurrentVersionObject.CurrentBuildNumber
+   //
    for( var i = 0; i < tmp.length; i++  )
    {
       CurrentVersionObject[ tmp[ i ].name ] =  tmp[ i ].value;
    }
+   tmp = parseInt( CurrentVersionObject.CurrentBuild );
+   CurrentVersionObject.CurrentBuild = tmp;
+   Out.StdOut.WriteLine( '\n' );
    delete tmp, MSSoft, CurrentVersionPath;
 
 } // End-of-StdRegWrapperClass()
@@ -973,7 +1015,7 @@ String.prototype.getGUID = function()
 }
 
 function ShowObject( obj )
-{
+{//                ComponentInfo
    var MaxNameL = "InitialTimestamp".length;
    for ( var p in obj )
    {
@@ -1061,7 +1103,10 @@ var LogicalVolumesCollection = null; // will be replaced by the instance of the 
 "01.149.90 July 04, 2015" - Gpt-Style volumes mounting improved: no more looping
 "01.149.91 July 04, 2015" - function InternalError( obj, callerName ) implemented, July 06
 "01.149.99 July 11, 2015"
-
+"02.00 July 14, 2015"     - precedes optimization of the driver loop and implementing data from
+                            HKLM\SYSTEM\HARDWARE
+"02.01 July 22, 2015"     - new ordering of CPC\Volume handling,
+Number type of CurrentVersionbject.CurrentBuild
 */
 function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more CollectionName argument
 {
@@ -1069,7 +1114,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
    // CollectionClass Constructor starts after all collections Buildes
    // search it by the tag "CollectionClassConstructor"
    //
-   var Version = "02.00 July 14, 2015";
+   var Version = "02.02 July 28, 2015";
 
    this.GetVersion = function()
    {
@@ -1225,8 +1270,8 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
 
    // Curious fact about the role of the Case sensitivity in the Registry : )
 
-   //                          + ----------- Upper Case 's' in services
-   //                          |        + -- Upper Case 1 - st character in the driver name
+   //                          +----------- Upper Case 's' in services
+   //                          |        +-- Upper Case 1 - st character in the driver name
    // Windows XP:              V        V
    // SYSTEM\CurrentControlSet\Services\Cdrom
    // SYSTEM\CurrentControlSet\Services\Disk
@@ -1300,6 +1345,10 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          var IsFlash   = ( Details.toLowerCase().indexOf( "flash"   ) > - 1 );
          var IsUsb     = ( Interface == "USBSTOR" );
 
+         obj.LVGroupStyle = ""; // common property regardless Type, Subtype
+         obj.NumberOfLV   = 1;  // common property regardless Type, Subtype
+         obj.LVGroup      = ""; // common property regardless Type, Subtype
+
          if ( obj.Service == "cdrom" )                                      // ClassDC
          {
             obj.Type = "DVD-ROM";
@@ -1313,11 +1362,8 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
                obj.Subtype = "USB";
                return obj;
             }
-            obj.Subtype = "Internal";
 
-            obj.NumberOfLV   = 1;
-            obj.LVGroup      = "";
-            obj.LVGroupStyle = "";
+            obj.Subtype = "Internal";
 
             return obj;                                                      // ClassDC
          }
@@ -1395,7 +1441,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
                tObj[ name ] = value;
             }
 
-            if ( obj.PnPDeviceID.indexOf( "VID_" ) > - 1 )                       // ClassDC
+            if (   obj.PnPDeviceID.indexOf( "VID_" ) > - 1 )                       // ClassDC
             {
                pType = sff_disk_filter[ name ];
                if ( pType )
@@ -1405,25 +1451,85 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
             }
          }
          return tObj;
-       }                                                                           // ClassDC
+      }
+      String.prototype.ltrim = function()
+      {
+	      return this.replace( /^(\s*)/, "" );
+      }
+
+      //
+      // getting hardware device properties from
+      // HKLM\HARDWARE\DEVICEMAP\Scsi\Scsi Port m\Scsi Bus n\Target Id k\Logical Unit Id l                                                                                // ClassDC
+      //
+      // it became clear that it make sense to read
+      // 1. only for internal HD
+      // 2. only if BuildNumber > "7601"
+      // 3. only SerialNumber REG_SZ
+      // But previously it is necessary to travers till
+      // HARDWARE\DEVICEMAP\Scsi\Scsi Port 1\Scsi Bus 0\Target Id 0\Logical Unit Id M,
+      // that it till the subpath which name starts with "Logical Unit Id "
+      //
+      function getSerials()// July 25
+      {
+         var serials = [];
+         var BN = CurrentVersionObject.CurrentBuild;
+
+         if ( BN < 9600 ) return serials;
+
+         var tmp1, tmp2, tmp3, tmp4, p1, p2, p3, p4, SN;
+         var path = "HARDWARE\\DEVICEMAP\\Scsi";
+         tmp1 = regObj.RegEnumKey( HKLM, path ); // ***
+////Out.StdOut.WriteLine( "getSerials: tmp1.length="+tmp1.length + " path=" + path );
+         // HARDWARE\DEVICEMAP\Scsi\Scsi Port 1\Scsi Bus 0\Target Id 0\Logical Unit Id M
+         //                          i          j          k           l
+         for ( var i = 0; i < tmp1.length; i++ )
+         {
+            p1 = path + "\\" + tmp1[ i ];
+            tmp2 = regObj.RegEnumKey( HKLM, p1  ); // ***
+////Out.StdOut.WriteLine( "getSerials: tmp2.length="+tmp2.length + " p1=" + p1 );
+            for ( var j = 0; j < tmp2.length; j++ )
+            {
+               p2 = p1 + "\\" + tmp2[ j ];
+               tmp3 = regObj.RegEnumKey( HKLM, p2  ); // ***
+////Out.StdOut.WriteLine( "getSerials: tmp3.length="+tmp3.length + " p2=" + p2 );
+               for ( var k = 0; k < tmp3.length; k++ )
+               {
+                  p3 = p2 + "\\" + tmp3[ k ];
+                  tmp4 = regObj.RegEnumKey( HKLM, p3  ); // ***
+////Out.StdOut.WriteLine( "getSerials: tmp4.length="+tmp4.length + " p3=" + p3 );
+                  for ( var l = 0; l < tmp4.length; l++ )
+                  {
+                     p4 = p3 + "\\" + tmp4[ l ];
+                     SN = regObj.RegGetStringValue( HKLM, p4, "SerialNumber" ); // ***
+                     if ( SN == null ) return serials;//break;
+////Out.StdOut.WriteLine( serials.length + " " + SN );
+                     serials[ serials.length ] = SN.ltrim();
+                  }
+               }
+            }
+         }
+         return serials;
+      }
+
 
       /* Example of the values read in the loop below
       [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\cdrom\Enum]
-      0"="SCSI\\CdRom&Ven_Msft&Prod_Virtual_DVD-ROM\\2&1f4adffe&0&000003"
+      "0"="SCSI\CdRom&Ven_Msft&Prod_Virtual_DVD-ROM\2&1f4adffe&0&000003"
+      "Count"=dword:00000002
+      "NextInstance"=dword:00000002
+      "1"="SCSI\CdRom&Ven_Msft&Prod_Virtual_DVD-ROM\2&1f4adffe&0&000004"
 
-      [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\services\sffdisk\Enum]         // ClassDC
-      "0"="SD\\VID_02&OID_544d&PID_SA08G&REV_0.4\\5&171d8613&0&0"
-      "Count"=dword:00000001
-      "NextInstance"=dword:00000001
+      [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\partmgr\Enum]
+      "0"="SCSI\Disk&Ven_&Prod_ST9320423AS\4&3516b3b5&0&000000"
+      "Count"=dword:00000007
+      "NextInstance"=dword:00000007
+      "1"="SCSI\Disk&Ven_TOSHIBA&Prod_MK1646GSX\4&3516b3b5&0&010000"
+      "2"="SD\DISK&Generic&SA08G&0.4\6&447d92&0&9c053461&0"
+      "3"="SCSI\Disk&Ven_Msft&Prod_Virtual_Disk\2&1f4adffe&0&000001"
+      "4"="SCSI\Disk&Ven_Msft&Prod_Virtual_Disk\2&1f4adffe&0&000002"
+      "5"="USBSTOR\Disk&Ven_Hitachi&Prod_HTS723232L9A360&Rev_\Hitachi_HT100219FCC400NEJTBU5G&0"
+      "6"="USBSTOR\Disk&Ven_Generic&Prod_USB_Flash_Disk&Rev_1100\08AD000000002788&0"
 
-      [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\disk\Enum]            // ClassDC
-      "0"="SCSI\\Disk&Ven_&Prod_ST9320423AS\\4&3516b3b5&0&000000"
-      "1"="SCSI\\Disk&Ven_TOSHIBA&Prod_MK1646GSX\\4&3516b3b5&0&010000"
-      "2"="SD\\DISK&Generic&SA08G&0.4\\6&447d92&0&9c053461&0"
-      "3"="SCSI\\Disk&Ven_Msft&Prod_Virtual_Disk\\2&1f4adffe&0&000001"
-      "4"="SCSI\\Disk&Ven_Msft&Prod_Virtual_Disk\\2&1f4adffe&0&000002"
-      "5"="USBSTOR\\Disk&Ven_Generic&Prod_USB_Flash_Disk&Rev_1100\\08AD000000002788&0"
-      "6"="USBSTOR\\Disk&Ven_USB_2.0&Prod_Storage_Device&Rev_0100\\00042222200000055949&0"
       -------------------------------------------InputForDevicesCollection-------------DiskId-------------------------------
        0 SCSI\CdRom&Ven_Msft&Prod_Virtual_DVD-ROM\2&1f4adffe&0&000003                  null
        1 SCSI\Disk&Ven_&Prod_ST9320423AS\4&3516b3b5&0&000000                           {714ce426-d2a2-11e4-824f-806e6f6e6963}
@@ -1441,9 +1547,13 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
       var obj = {}, vObj, name, value, rc, tmp, prefix, Unique;
       var pType, vals, pnpkey, sff_pnpkey, DiskIdPath, tstamp;
 
-      var services = [ "cdrom", "sffdisk", "flpydisk", "disk" ];
+      //var services = [ "cdrom", "sffdisk", "flpydisk", "disk" ];// 2.00 list of drivers
+      // July 22, these two are enough to get all devices PnPDEviceIds
+      var services = [ "cdrom", "partmgr"];
 
       var servpath = "SYSTEM\\CurrentControlSet\\services\\";
+      var hpath = "HARDWARE\\DESCRIPTION\\System\\MultifunctionAdapter\\0\\DiskController\\0\\DiskPeripheral\\";
+      var devnum = 0, fpath, tmp, serials, serialsIndex = 0;
 
       // An array of the Devices objects this function builds and returns to the caller
       var Devices = [];
@@ -1452,16 +1562,20 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
       {
          devs = regObj.RegGetAllValues( HKLM, servpath + services[p] + "\\Enum" ); // ***
 
+         if ( services[ p ] == "partmgr" )
+         {
+            serials = getSerials(); // July 25
+         }
+
          if ( devs == null || typeof( devs ) != "object"
          ||   devs.length == 0 ) continue; // omit interface without any device serviced
 
          for ( var i = 0; i < devs.length; i++ )
          {
-
             if ( devs[ i ].name == "Count"
             ||   devs[ i ].name == "INITSTARTFAILED"
             ||   devs[ i ].name == "NextInstance"
-            ||   devs[ i ].name.indexOf( "LEGACY_" ) > - 1 ) continue;             // ClassDC
+            ||   devs[ i ].value.indexOf( "LEGACY_" ) > - 1 ) continue;             // ClassDC
 
             obj = { "PnPDeviceID": devs[ i ].value };
             obj.OrderIndex = devs.length; // set OrderIndex property
@@ -1469,6 +1583,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
             var ppath = "SYSTEM\\CurrentControlSet\\Enum\\";
             prefix    = ppath.length;
             pnpkey    = devs[ i ].value; //////// SD\VID_02&OID_544d&PID_SA08G&REV_0.4\5&171d8613&0&0
+
             if ( pnpkey.indexOf( "VID_" ) > - 1 )
             {
                obj.VID_PnPDeviceID = pnpkey; // correct PnPDeviceID for SD will be set later
@@ -1559,9 +1674,51 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
             // place into DevicesCollection.
             //
 
-            if ( obj.DiskId.charAt(0) == "{" )// and now this code will work even in XP
+            if ( obj.DiskId.charAt(0) == "{" )// and now this code will work even in XP  // ClassDC
             {
                this[ obj.PnPDeviceID.replace( /\\/g, "#" ) ] = this.Count;
+            }
+
+            if ( obj.Type == "HD" && obj.Subtype == "Internal" )                          // ClassDC
+            {
+               if ( CurrentVersionObject.CurrentBuild >= 9600 )
+               {
+                  obj.SerialNumber = serials[ serialsIndex++ ]; // July 25
+               }
+
+               fpath = hpath + devnum.toString();
+               ++devnum;
+               props = regObj.RegGetAllValues( HKLM, fpath );  // *** read all values     // ClassDC
+               /*
+               "Component Information"=00000000000000000000000ffffffff
+               "Identifier"="0685a158-1036c1c4-A"
+               "Configuration Data"=01000000000000000000000001000000050000001000000000000000000000000000000000020000ff0300003f000000f0000000"
+               */
+
+               for ( var p = 0; p < props.length; p++ )                                  // ClassDC
+               {
+                  switch( props[ p ].name )
+                  {
+                     case "Component Information": obj.ComponentInfo = props[ p ].value; break;
+                     //case "Configuration Data":    obj.ConfigData    = props[ p ].value; break;
+                     // as StdRegProv doesn't provide a method to read REG_FULL_RESOURCE_DESCRIPTOR
+                     // and an attempt to use GetBinary returns null then we ignore this property
+                     case "Configuration Data":    continue; break;
+                     case "Identifier":            obj.Identifier    = props[ p ].value; break;
+                     // on a case that a new property will appear :)
+                     default:                      obj[ props[ p ].name ] = props[ p ].value;
+                  }
+               }
+
+               if( obj.Identifier.substr( 9, 8 ) == "00000000" )                          // ClassDC
+               {
+                  obj.LVGroupStyle = "Gpt";
+               }
+			      else
+               {
+                  obj.Signature = obj.Identifier.substr( 9, 8 );
+                  obj.LVGroupStyle = "Mbr";// AM NOT SURE that this rule IS CORRECT, has no Internal Gpt
+               }
             }
 
             //
@@ -1580,7 +1737,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
 
          }// End-of-devs-loop:-set-properties-i-loop: 14 properties for each of the objects
 
-      }// End-of-Interfaces-loop: [ "cdrom", "sffdisk", "flpydisk", "disk" ], really only cdom & disk since 8/8.1
+      }// End-of-Interfaces-loop: [ "cdrom", "partmrg" ], really only cdom & disk since 8/8.1
 
       this.Show = function()                                        // ClassDC
       {                                                             // ClassDC
@@ -1676,8 +1833,11 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
       var Count = 0;   // number of the objects placed into the temporary collection
 
       var servpath  = "SYSTEM\\CurrentControlSet\\services\\volsnap\\Enum";
-      var svols     = regObj.RegGetAllValues( HKLM, servpath ); // *** read all values
+      var svols = regObj.RegGetAllValues( HKLM, servpath ); // *** read all values
 
+      // July 26: this fragment HAD to be changed, DWORD Count should be read at 1-st and
+      // then i.tostring(), i = 0, i < Count, i++. This will GARANTEE correct ordering of
+      // the childs for the same parent.
       for ( var i = 0; i < svols.length; i ++ )
       {  // vols[i].value = Root\LEGACY_VOLSNAP\0000
          if ( svols[ i ].name == "Count"
@@ -1688,6 +1848,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          obj = {};
 
          tmp = svols[ i ].value.substr( "STORAGE\\Volume\\".length );        // ClassSV
+
          devid    = tmp.substr( 0, GuidL );                     // it CAN be GUID
          offset   = tmp.substr( GuidL + 1, 16 ).toLowerCase();  // it CAN be Offset
          IsOffset = tmp.charAt( GuidL ) == "#"  &&  // verify that Offset separator is present
@@ -1767,7 +1928,6 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          //
 
          var ppath = "SYSTEM\\CurrentControlSet\\Enum\\STORAGE\\Volume\\";   // ClassSV
-
          var props = regObj.RegGetAllValues( HKLM, ppath + tmp );  // *** read all values
 
          /* these are an example values of the properties read by the code line above
@@ -1995,7 +2155,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          obj.DevID = w.substr( 0, q ).substr( p );
          return obj;
       }
-//Out.StdErr.WriteLine( "LV parser Devid NOT Classified!!!" );
+      Out.StdErr.WriteLine( "LV parser Devid NOT Classified!!!" );
       return obj; // this couldn't happen !!!
    }  // End-of-SetObjectTypeByVolumeStorage
 
@@ -2033,6 +2193,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
    function ClassLV( regObj, ShowKeys )                                                 // ClassLV - Starting -- tag
    {
       var StdReg  = regObj;
+      var Assignments = [];
 
       var known = [
                      [ 0x0000, 4 ], //  1 half - word 2d02 or 0000
@@ -2143,18 +2304,13 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          {
             var Prefix = "5c005c003f005c00";
             var LVolL  = "Volume{3c0003d5-d08a-45da-8165-7af3134976c4}\\".length;
-            var LabelL = 0x80;
-            // 128 hex chars = 64 binary bytes
-            var FSL    = 0x70;
-            //
+            var LabelL = 0x80;                                        // 128 hex chars = 64 binary bytes
+            var FSL    = 0x70;                                        //
             var ret = [];
-            var tmp = this.split( Prefix );
-            // contains leading hex data, vol1, vol2, Ctrl                                  // ClassLV
-            ret[ 0 ] = tmp[ 0 ];
-            // save leading data
+            var tmp = this.split( Prefix );                           // contains leading hex data, vol1, vol2, Ctrl                                  // ClassLV
+            ret[ 0 ] = tmp[ 0 ];                                      // save leading data
 
-            ret[ 1 ] = ( Prefix + tmp[ 1 ] ).HexString2ASCI();
-            // save vol1 : dev
+            ret[ 1 ] = ( Prefix + tmp[ 1 ] ).HexString2ASCI();        // save vol1 : dev
 
             ret[ 2 ] = ( Prefix + tmp[ 2 ].substr( 0, 4 * ( LVolL ) ) ).HexString2ASCI();  // save vol1 : vol
 
@@ -2174,8 +2330,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          var key = SID + "\\Software\\Microsoft\\Windows\\CurrentVersion" +
          "\\Explorer\\MountPoints2\\CPC\\Volume";
 
-         var HKU = 0x80000003;
-         // HKEY_USERS
+         var HKU = 0x80000003;               // HKEY_USERS
 
          var Vols = StdReg.RegEnumKey( HKU, key );  // enum all volumes in CPC ***
 
@@ -2214,13 +2369,44 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
       {
          var msg = Letter + " assigned at index " + index.toString().right(2) + " to " +
          Type.left( "Mbr partition".length + 1 ) + Detail;
-         Out.StdOut.WriteLine( msg );
+         Assignments[ Assignments.length ] = msg;
          return false;
       }
 
+      function setStyle( obj )                                                                        // ClassLV
+      {
+         if ( obj.Type != "Partition" )
+         {
+            if ( obj.Type == "DVD-ROM" )
+            {
+               obj.Offset = "";                                                                        // ClassLV
+            }
+            else
+            {
+               obj.Offset = "0000000000000000";
+            }
+         }
+         if ( obj.Type != "DVD-ROM" )
+         {
+            var pobj = DevicesCollection[ obj.ParentIndex ];
+
+            if ( pobj.Type == "HD" && pobj.Subtype == "Internal" )
+            {
+               obj.Style = pobj.LVGroupStyle;
+            }
+
+            pobj.LVGroup += pobj.LVGroup == "" ? obj.Offset : "," + obj.Offset;                      // ClassLV
+            pobj.NumberOfLV++;
+            DevicesCollection[ obj.ParentIndex ] = pobj;
+         }
+         return obj;
+      }
+
       //
-      // CollectLogicalVolumes execution starts
+      // CollectLogicalVolumes execution starts                                                     // ClassLV
       //
+
+      var DEBUG = false;
 
       this.Count = 0;
 
@@ -2232,7 +2418,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
       var obj, tmp, devid, offset, ParentType, index;                                               // ClassLV
 
       var ChildN    = 1;
-      var PrevDevID = "";
+      var PrevDCUniqueID = "";
       var IsOffset  = false;
 
       var TColl = {};  // temporary collection for SV - objects
@@ -2275,35 +2461,36 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          obj.Boot       = ( blob.substr( 0x10, 2 ) == "41" );    // DiskPart use it in Info field
          obj.System     = ( blob.substr( 0x68, 2 ) == "1e" );    // DiskPart use it in Info field
          obj.UserName   = CurrentUserObject.CurrentUserName;     // and THIS data IS NOT set by Win32_LogicalDisk
+         obj.Style      = "";                                    // initialize as Unknown
 
-         if ( obj.Type != "Partition")
-         {
-            if ( obj.Type == "DVD-ROM" )
-            {
-               obj.Offset = "";                                                                        // ClassLV
-            }
-            else
-            {
-               obj.Offset = "0000000000000000";
-            }
+		   pobj           = DevicesCollection[ index ];
+         obj = setStyle( obj ); // July 30
+         if ( pobj.Type == "HD" )                                                                       // ClassLV
+		   {
+		      obj.Type    = "Partition";
+			   obj.Subtype = pobj.Subtype;
+			   obj.LVUniqueID = pobj.DCUniqueID + obj.Offset;                                              // ClassLV
+         }
+         else// Removable or DVD-ROM come here. Offset is not applicable to DVD-ROM                                                                                        // ClassLV
+		   {//    but we already set Offset="" for DVD-ROMs and thus no more IF's :)
+		      obj.Subtype = pobj.Subtype;
+		      obj.LVUniqueID = pobj.DCUniqueID + obj.Offset;                                              // ClassLV
          }
 
-         obj.LVUniqueID = obj.DCUniqueID + obj.Offset;                                                  // ClassLV
          // we should control and correctly set ChildNumber property
          // Small fragment which follow provides correct ChildNumber
          // property assignment
 
-         if ( obj.LVUniqueID != PrevDevID )
+         if ( obj.DCUniqueID != PrevDCUniqueID )                                                             // ClassLV
          {
-            if ( PrevDevID != "" )
+            if ( PrevDCUniqueID != "" )
             {
-               ChildN = 1;
+               ChildN = DevicesCollection[ obj.ParentIndex ].NumberOfLV;
+               if ( obj.Type == "Partition" ) ++ChildN;
             }
-            PrevDevID = obj.LVUniqueID;                                                                  // ClassLV
+            PrevDCUniqueID = obj.DCUniqueID;                                                             // ClassLV
          }
-
          obj.ChildNumber = ChildN;
-         ++ ChildN;
 
          // that is all, just place an object prepared into the temporary collection                     // ClassLV
 
@@ -2312,13 +2499,8 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
             TColl[ obj.ParentIndex ] = [];                                                               // ClassLV
          }
 
-         if ( obj.Type != "DVD-ROM" )
-         {
-            pobj = DevicesCollection[ obj.ParentIndex ];
-            pobj.LVGroup += pobj.LVGroup == "" ? obj.Offset : "," + obj.Offset;                          // ClassLV
-            pobj.NumberOfLV++;
-            DevicesCollection[ obj.ParentIndex ] = pobj;
-         }
+ //        obj = setStyle( obj );
+
          TColl[ obj.ParentIndex ][ TColl[ obj.ParentIndex ].length ] = obj;
          ++Count;     // increment number of the LV objects collected
       } // End-of-Collecting-Objects-loop
@@ -2331,46 +2513,81 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          nc = TColl[ i ].length;
          pobj = DevicesCollection[ i ];
 
-         if ( pobj.SVGroup == pobj.LVGroup )
+         // July 27, very STRANGE decesion to sort CPC\Volume by VolumeGUIDS resulted
+         // that the childs of the one parent are not immedeatly following each other
+         // as it always be sence at least Build 7601. This decesion looks like sorting
+         // childs nor by the the same parent and Offset but by the height.
+         // Thus we HAD TO SORT LVGroup as a childs with SMALL offsets may follow childs            // ClassLV
+         // with a BIG Offsets. NE BOGI GORSHKI OBJIGAYUT in MS !!!
+         // WHAT FOR it was necessary to SORT CPC\Volume by VolumeGUIDs ????
+         // It would be absolutly CORRECT decesion provided an ordering of the Volumes
+         // was the same as used by DISKPART.EXE. Though an order of the Volumes in
+         // CPC\Volume is NATURAL, corresponding to the 1-st appearence of each of the
+         // Volume in the system.
+         //
+
+         if ( pobj.NumberOfSV == pobj.NumberOfLV )                                                   // ClassLV
          {
             pobj.LVGroupStyle = "Mbr";
+            if ( pobj.NumberOfSV > 1  // sorting of the LVGroup is necessary since Build 10240
+            &&  CurrentVersionObject.CurrentBuild >= 10240 )
+            {
+               pobj.LVGroup = pobj.SVGroup; //// NO NEED SORTING, just copy SVGroup //// July 28
+            }
          }
-         else
+         else if ( pobj.Type == "HD" )//&& pobj.LVGroupStyle == "" )
          {
-            pobj.LVGroupStyle = "Gpt";
+            pobj.LVGroupStyle = "Gpt";                                                               // ClassLV
          }
+
          for( var j = 0; j < nc; j ++ )
          {
             obj = TColl[ i ][ j ];
-            obj.Style = pobj.LVGroupStyle;                                                                 // ClassLV
+            if(DEBUG)WScript.StdOut.WriteLine( i.toString().right(2)+" "+j.toString().right(2)+
+            " "+obj.Type+" "+obj.Subtype+" "+
+             pobj.Type+" "+pobj.Subtype+" "+pobj.LVGroupStyle );
+            if ( obj.Style == "" )
+            {
+               obj.Style = pobj.LVGroupStyle;                                                           // ClassLV
+            }
 
             if ( obj.Type != "Partition" )
             {
                this[ obj.DevID ] = this.Count;
+               if(DEBUG)WScript.StdOut.WriteLine( i.toString().right(2)+" "+j.toString().right(2)+
+               " "+this.Count.toString().right(2)+" new key "+obj.DevID );
+
             }
 
-            //  0123456789a
+            //  0123456789a                                                                              // ClassLV
             //  {1036c1c4-0000-0000-007e-000000000000}
             if ( obj.Style == "Mbr" )
             {
-               obj.SignOwner = false;
-
-               if ( obj.VolumeGUID.substr( 10, 9 ) == "0000-0000" ) // This case happens at Windows 10 only
-               {                                                    // This feature permits to decrease
-                  f1 = obj.VolumeGUID.substr( 1, 8 ) + obj.Offset;  // number of unnecessary VolumesGuid.field 1
-                  obj.SignOwner = true;                             // keys created in LogicalVolumes collection:
-                  this[ f1 ] = this.Count;                          // only SignOwners keys are tecessary and
-               }                                                    // will be matched by MountedDevices Sign keys
-               else                                                 // For Mbr-Style Volumes all VolumeGUID.field 1
-               {                                                    // keys had to be created which will be matched
-                   f1 = obj.VolumeGUID.substr( 1, 8 ) + obj.Offset; // by the MountedDevices DosDevices as only
-                   this[ f1 ] = this.Count;                         // Gpts with MountNames assigned are present
-               }                                                    // in MountedDevices
-            }
-            else
+               if (0)//( CurrentVersionObject.CurrentBuild > 7601 )// even under 10240 works for a 2-nd disk
+               {
+                  obj.SignOwner = false;
+                  if ( obj.VolumeGUID.substr( 10, 9 ) == "0000-0000" ) // This case happens at Windows 8.1+
+                  {                                                    // This feature permits to decrease
+                     f1 = obj.VolumeGUID.substr( 1, 8 ) + obj.Offset;  // number of unnecessary VolumesGuid.field 1
+                     obj.SignOwner = true;                             // keys created in LogicalVolumes collection:
+                     this[ f1 ] = this.Count;                          // only SignOwners keys are tecessary and
+                  }                                                    // will be matched by MountedDevices Sign keys
+               }
+               else if ( obj.Type == "Partition" )                     // For Mbr-Style Volumes all VolumeGUID.field 1
+               {                                                       // keys had to be created which will be matched
+                  f1 = obj.VolumeGUID.substr( 1, 8 ) + obj.Offset;     // by the MountedDevices DosDevices as only
+                  this[ f1 ] = this.Count;                             // Gpts with MountNames assigned are present
+                  if(DEBUG)WScript.StdOut.WriteLine( i.toString().right(2)+" "+j.toString().right(2)+
+                  " "+this.Count.toString().right(2)+" new key "+f1 );
+               }// End-of-Else                                                       // in MountedDevices
+            }// End-of-if ( obj.Style == "Mbr" )
+            else if ( obj.Style == "Gpt" && obj.Type == "Partition" )
             {
                this[ obj.VolumeGUID.substr( 1, 8 ) ] = this.Count;
+               if(DEBUG)WScript.StdOut.WriteLine( i.toString().right(2)+" "+j.toString().right(2)+
+               " "+this.Count.toString().right(2)+" new key "+obj.VolumeGUID.substr( 1, 8 ) );
             }
+
             obj.OrderIndex = this.Count;                                                                    // ClassLV
             this[ this.Count ] = obj;
             ++this.Count;
@@ -2403,11 +2620,36 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
       var rc, count;
       var Unique, index, key, msg;
       Out.StdOut.WriteLine( "\n" );
+	   var guids = [], letters = [];
       for ( var i = 0; i < tmp.length; i++ )
       {
-         if ( tmp[ i ].name.charAt( 0 ) == "#" ) continue; // ignore junk entries
+         if ( tmp[ i ].name.charAt( 0 ) == "#" ) continue; // ignore junk entries        // ClassLV
          delete tmp[ i ].type;
 
+		   if ( tmp[ i ].name.charAt( 1 ) == "?" ) // Volume
+		   {
+		      guids[ guids.length ] = tmp[ i ];
+		   }
+		   else
+		   {
+		      letters[ letters.length ] = tmp[ i ];
+		   }
+      }
+
+      tmp = [];
+	  for ( var i = 0; i < guids.length; i++ )                                             // ClassLV
+	  {
+	     tmp[ tmp.length ] = guids[ i ];
+	  }
+	  delete guids;
+	  for ( var i = 0; i < letters.length; i++ )
+	  {
+	     tmp[ tmp.length ] = letters[ i ];
+	  }
+	  delete letters;
+
+      for ( var i = 0; i < tmp.length; i++ )
+      {
          //
          // set properties derived from the name value: Letter, VolumeGUID, name         // ClassLV
          //
@@ -2429,19 +2671,16 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
 
             index = this[ tmp[ i ].DevID ];                      // EXCLUDE REMOVABLES and DVDs
                                                                  // WHICH ARE ABSENT
-            if ( typeof( index ) != "number" ) continue;         // IN DevicesCollection
+            if ( typeof( index ) != "number" ) continue;         // IN DevicesCollection           // ClassLV
 
             tmp[ i ].Type = this[ index ].Type;                  // set correct object Type value
-
-
-            //this[ index ].Letter = tmp[ i ].Letter;
 
             if ( tmp[ i ].Letter == " " ) continue;              //
             this[ index ].Letter = tmp[ i ].Letter;
             FormatAssignMsg( this[ index ].Letter, index, this[ index ].Type, this[ index ].DevID );
             continue;
 
-         } // End-of-case-value.length > 48
+         } // End-of-case-value.length > 48                                                        // ClassLV
 
          if ( tmp[ i ].value.length == 48  )
          {
@@ -2457,30 +2696,31 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
             continue;
          }
 
-         if ( tmp[ i ].value.length == 24 )
+         if ( tmp[ i ].value.length == 24 )                                                 // ClassLV
          {
             tmp[ i ].Type  = "Partition"
             tmp[ i ].Style = "Mbr";
 
             if ( tmp[ i ].Letter == " " )// that id VolumeGUID is defined
             {
-               Unique = tmp[ i ].VolumeGUID.substr( 1, 8 ) +          // GUID Field 1
+               Unique = tmp[ i ].VolumeGUID.substr( 1, 8 ) +          // GUID Field 1            // ClassLV
                         tmp[ i ].value.substr( 8 ).invertHexString(); // Offset
 
                index = this[ Unique ];
 
                if ( typeof( index ) == "number" )
                {
+                  if(DEBUG)WScript.StdOut.WriteLine( "Mbr key "+Unique+" gives index "+index );
                   this[ index ].Letter = " ";
                   msg = tmp[ i ].Letter + " assigned Mbr " + Unique + " Signature " + tmp[ i ].value.substr( 0, 8 );
                   //
-                  // CREATE one more key on base of Signature
+                  // CREATE one more key on base of Signature                                   // ClassLV
                   //
                   Unique = tmp[ i ].value.substr( 0, 8 ) +
                   tmp[ i ].value.substr( 8 ).invertHexString();
                   this[ Unique ] = index;
-                  //msg += ", new Direct Access key: " + Unique;
-                  //Out.StdOut.WriteLine( msg );
+                  msg += ", new Direct Access key: " + Unique;
+                  Assignments[ Assignments.length ] = msg;
                   continue;
                }
             }
@@ -2514,7 +2754,20 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          for( var i = 0; i < cnt; i++ )                                                                     // ClassLV
          {                                                                                                  // ClassLV
             ShowObject( this[ i ] );                                                                        // ClassLV
-         }                                                                                                  // ClassLV
+         }
+         Out.StdOut.WriteLine( "Following MountPoints and MountNames were matched" );                         // ClassLV
+         Out.StdOut.WriteLine( "\n" );                                                                      // ClassLV
+         for( var i = 0; i < Assignments.length; i++ )                                                                     // ClassLV
+         {
+            if ( i > 0
+            && Assignments[ i - 1 ].charAt(0) == " "
+            && Assignments[ i ].charAt(0) != " " )
+            {
+               Out.StdOut.WriteLine( "\n" );
+            }                                                                                                  // ClassLV
+            Out.StdOut.WriteLine( Assignments[ i ] );                                                                        // ClassLV
+         }
+         Out.StdOut.WriteLine( "\n" );                                                                      // ClassLV                                                                                                 // ClassLV
          return false;                                                                                      // ClassLV
       }
       /*
@@ -2548,7 +2801,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          [ "S/N",         "VolumeSN",    "8,n" ],
          [ "FS",          "Fs",          "5,l" ],
          [ "Type",        "Type",        "9,l" ],
-         [ "Subtype",     "Subtype",     "7,L" ],
+         [ "Subtype",     "Subtype",     "8,L" ],
          [ "Gpt",         "Style",       "3,L" ],
          [ "VolGUID.F1",  "VolumeGUID",  "10,L" ],
          [ "DevGUID.F1",  "DevID",       "10,L" ],
@@ -2592,7 +2845,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
                      }
                      if ( fieldn == "DevID" )
                      {
-                        out1 += ( obj.Type == "Partition" ? obj.DevID : " " ).left( fieldl ) + "  ";
+                        out1 += ( obj.Type != "DVD-ROM" ? obj.DCUniqueID : " " ).left( fieldl ) + "  ";
                         break;
                      }
                      if ( fieldn == "VolumeGUID" )
@@ -2660,23 +2913,27 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
 
    var ShowKeys = true; // must be set by the run method !!!!!!!!!!!!
 
-   DevicesCollection        = new ClassDC( StdRegInstance );                            // CollectionClassConstructor
-   StorageVolumesCollection = new ClassSV( StdRegInstance );                            // CollectionClassConstructor
-   LogicalVolumesCollection = new ClassLV( StdRegInstance );                            // CollectionClassConstructor
+   this.Run = function()                                                                // CollectionClassRun method
+   {                                                                                    // CollectionClassRun method
+      DevicesCollection        = new ClassDC( StdRegInstance );                         // CollectionClassRun method
+      StorageVolumesCollection = new ClassSV( StdRegInstance );                         // CollectionClassRun method
+      LogicalVolumesCollection = new ClassLV( StdRegInstance );                         // CollectionClassRun method
+   }                                                                                    // CollectionClassRun method
+
    this.ShowResemblanse = function()// July 12                                          // CollectionClassConstructor
-   {                                                                                    // CollectionClassConstructor
+   {                                                                                    // CollectionClass ShowResemblanse
       var cnt, obj, msg;
-      var Uniques = [];                                                                 // CollectionClassConstructor
+      var Uniques = [];                                                                 // CollectionClass ShowResemblanse
       cnt = DevicesCollection.Count;
-      for ( var i = 0; i < cnt; i++ )                                                   // CollectionClassConstructor
+      for ( var i = 0; i < cnt; i++ )                                                   // CollectionClass ShowResemblanse
       {
          obj = DevicesCollection[ i ];
          msg = obj.DCUniqueID.substr( 6, 2 ) + " "  + obj.DCUniqueID.left( 24 ) + " DCUnique     " +
                obj.OrderIndex.toString().right( 2 ) + " OrderIndex ".left( ContainerLeft ) +  (obj.Type).left(9) + " DC";
          msg += " " + obj.LVGroupStyle;
          Uniques[ Uniques.length ] = msg;
-      }                                                                                 // CollectionClassConstructor
-      cnt = StorageVolumesCollection.Count;                                             // CollectionClassConstructor
+      }                                                                                 // CollectionClass ShowResemblanse
+      cnt = StorageVolumesCollection.Count;                                             // CollectionClass ShowResemblanse
       for ( var i = 0; i < cnt; i++ )
       {
          obj = StorageVolumesCollection[ i ];
@@ -2688,11 +2945,11 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
             msg = ( obj.ContainerID.substr( 7, 2 ) + " " + obj.ContainerID.substr( 1, 8 ) ).left( GuidsLeft ) +
             " ContainerID-f1".left( ContainerLeft ) + obj.Type.left(9) + " SV";
             msg += " " + DevicesCollection[ obj.ParentIndex ].LVGroupStyle;
-            Uniques[ Uniques.length ] = msg;
+            Uniques[ Uniques.length ] = msg;                                             // CollectionClass ShowResemblanse
          }
       }
       cnt = LogicalVolumesCollection.Count;
-      for ( var i = 0; i < cnt; i++ )
+      for ( var i = 0; i < cnt; i++ )                                                    // CollectionClass ShowResemblanse
       {
          obj = LogicalVolumesCollection[ i ];
          msg = obj.LVUniqueID.substr( 6, 2 ) + " "  + obj.LVUniqueID.left( 24 ) + " LVUnique     " +
@@ -2701,16 +2958,16 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
          msg = ( obj.VolumeGUID.substr( 7, 2 ) + " " + obj.VolumeGUID.substr( 1, 8 ) ).left( GuidsLeft ) +
          " VolumeGUID-f1".left( ContainerLeft ) + obj.Type.left(9) + " LV";
          msg += " " + obj.Style;
-         Uniques[ Uniques.length ] = msg;                                               // CollectionClassConstructor
+         Uniques[ Uniques.length ] = msg;                                               // CollectionClass ShowResemblanse
       }
       Uniques.sort();
       Out.StdOut.WriteLine( "\n" );
-      Out.StdOut.WriteLine( "--- All-Collections-Objects-Resemblence-Demo ---" );       // CollectionClassConstructor
+      Out.StdOut.WriteLine( "--- All-Collections-Objects-Resemblence-Demo ---" );       // CollectionClass ShowResemblanse
       Out.StdOut.WriteLine( "\n" );
       cnt = Uniques.length;
       for ( var i = 0; i < cnt; i++ )
       {
-         Out.StdOut.WriteLine( Uniques[ i ] );                                          // CollectionClassConstructor
+         Out.StdOut.WriteLine( Uniques[ i ] );                                          // CollectionClass ShowResemblanse
       }
       Out.StdOut.WriteLine( "\n" );
       return false;                                                                     // CollectionClassConstructor
@@ -2724,7 +2981,7 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
       LogicalVolumesCollection.ShowCollectionKeys();
       this.ShowResemblanse();                                                           // CollectionClassConstructor
       return false;                                                                     // CollectionClassConstructor
-   }                                                                                    // CollectionClassConstructor
+   }                                                                                    // CollectionClassConstructor                                                                                  // CollectionClass prepareDPInput
 
 } // End-of-CollectionClass                                                             // CollectionClassConstructor-Trailing-Tag
 </script>                    <!-- CollectionClass TrailingTag -->
@@ -2732,122 +2989,116 @@ function CollectionClass( StdRegInstance )// June 28 // July 11 UPDATE, no more 
 //===========================================================================
 // Test code for StdRegWrapperClass, EnumDevicesVolumesClass
 //===========================================================================
-var MyName  = WScript.ScriptName;
-var tClass  = "EnumDevicesVolumesClass";
-var Version = "1.0 build 01 June 19";
-var Out  = null;
-var fso  = null;
-var path = null;
+var MyName = WScript.ScriptName;
+var fso    = new ActiveXObject( "Scripting.FileSystemObject" );
+var path   = fso.GetAbsolutePathName( "." );
+var CreateLogFiles = false;
+var UseStorageBuffers = false;
 var Out  = {};
 Out.StdErr  = WScript.StdErr;
 Out.StdOut  = WScript.StdOut;
-var started, finished;
-var second = 1000;
-var minute = second * 60;
-var now = new Date();
-var gb  = null;
-var MsgLevel = 2;
-var regObj = null;
-var tobj= null;
+var regObj  = null;
+var now     = null;
+var tobj    = null;
+var started = null;
+var gb      = null;
+
 var rver, dver;
-var rc;
 
-function Init()
+var IsCompetition;
+try
 {
-   if ( MyName.toLowerCase().indexOf( ".wsf" ) == - 1 )
-   {
-      return true;
-   }
-   if ( fso != null ) return true;
-
+   IsCompetition = ( WScript.Arguments.Item(0).toLowerCase() == "compete" );
+}
+catch(e)
+{
+   IsCompetition = false;
+   CreateLogFiles = true;
+   UseStorageBuffers = true;
+   now     = new Date();
    started = now.getTime();
-   var seconds = Math.round( now.getTime() / second ).toString( 16 ).right( 5 );
-   fso  = new ActiveXObject( "Scripting.FileSystemObject" );
-   path = fso.GetAbsolutePathName( "." );
-   var any = path + "\\" + MyName + "-" +
-   Version.replace( /\./g, "-" ).replace( / /g, "_" ) + "-" + seconds;
-
-   Out.StdErr = fso.CreateTextFile( any + "-StdErr.txt", true, 0 );// overwrite, ascii
-   Out.StdOut = fso.CreateTextFile( any + "-StdOut.txt", true, 0 );// overwrite, ascii
-
-   return true;
 }
 
-var rc = Init();
+var tClass  = "EnumDevicesVolumesClass";
+var Version = "1.02 build 01 July 29";
 
-if ( MsgLevel )
+function CountDuration( started )
+{
+   var finished, duration, durmilli, durss, durmm, durhh, cdur;
+   var second   = 1000;
+   var minute   = second * 60;
+
+   finished = new Date().getTime();
+   duration = finished - started;
+   cdur = duration + " milliseconds";
+
+   if ( duration > second )
+   {
+      durss = Math.round( duration / second );
+      durmilli = ( duration + 999 ) % second;
+      cdur = "Processor time used: "+durss + "." + durmilli + " seconds";
+   }
+   return cdur;
+}
+
+regObj = new StdRegWrapperClass();     // create an instance of the StdRegWrapperClass
+regObj.SetWarnings( 0 );               // enable warnings
+rver = regObj.GetVersion();            // get version of StdRegWrapperClass
+regObj.SetUseCallCounts( 1 );          // enable counting of the calls
+
+tobj = new CollectionClass( regObj );  // create an instance of the CollectionClass
+dver = tobj.GetVersion();              // get version of CollectionClass
+
+if ( IsCompetition )
+{
+   Out.StdOut.WriteLine( "\n" );
+   Out.StdOut.WriteLine( "Build "+CurrentVersionObject.CurrentBuild+
+                           ", StdRegWrapperClass version " + rver +
+                           ", EnumDevicesAndVolumesClass version " + dver );
+   Out.StdOut.WriteLine( "\n" );
+}
+else
 {
    gb = new GlobalBuffers();              // create GlobalBuffers instance
    gb.Out.StdErr = Out.StdErr;            // redefine Output for the GlobalBuffers
    gb.Out.StdOut = Out.StdOut;            // redefine Output for the GlobalBuffers
-   gb.Out.StdOut.WriteLine( "--- " + MyName + " Version " + Version + " started at " + now.toString() + " ---" );
-   regObj = new StdRegWrapperClass();     // create an instance of the StdRegWrapperClass
+
    regObj.OutBuffers = gb;
    regObj.Out.StdErr = gb.PutEMsg;        // redefine Output for the StdRegWrapperClass
    regObj.Out.StdOut = gb.PutIMsg;        // redefine Output for the StdRegWrapperClass
-   regObj.SetUseCallCounts( 1 );          // enable counting of the calls
-   regObj.SetWarnings( 0 );               // enable warnings
-   rver = regObj.GetVersion();            // get version of StdRegWrapperClass
-   gb.Out.StdOut.WriteLine( "StdRegWrapperClass version:" + rver + " will be used." );
-   tobj = new CollectionClass( regObj );  // create an instance of the CollectionClass
+
    tobj.OutBuffers = gb;
    tobj.Out.StdErr = gb.PutEMsg;          // redefine Output for the CollectionClass
    tobj.Out.StdOut = gb.PutIMsg;          // redefine Output for the CollectionClass
-   dver = tobj.GetVersion();              // get version of CollectionClass
-   gb.Out.StdOut.WriteLine( tClass + " version:" + dver + " will be used." );
+
+   gb.PutIMsg( "\n" );
+   gb.PutIMsg( "Build "+CurrentVersionObject.CurrentBuild+
+               ", StdRegWrapperClass version " + rver +
+               ", EnumDevicesAndVolumesClass version " + dver );
+   gb.PutIMsg( "\n" );
 }
-else
+
+tobj.Run();
+
+if ( ! IsCompetition )
 {
-   Out.StdOut.WriteLine( "--- " + MyName + " Version " + Version + " started at " + now.toString() + " ---" );
-   regObj = new StdRegWrapperClass();     // create an instance of the StdRegWrapperClass
-   regObj.Out.StdErr = Out.StdErr;        // redefine Output for the StdRegWrapperClass
-   regObj.Out.StdOut = Out.StdOut;        // redefine Output for the StdRegWrapperClass
-   regObj.SetUseCallCounts( 1 );          // enable counting of the calls
-   regObj.SetWarnings( 0 );               // enable warnings
-   rver = regObj.GetVersion();            // get version of StdRegWrapperClass
-   Out.StdOut.WriteLine( "StdRegWrapperClass version:" + rver + " will be used." );
-   tobj = new CollectionClass( regObj );  // create an instance of the CollectionClass
+   cdur = CountDuration( started );
+   gb.PutIMsg( MyName + " finished building collections at " + now.toString() );
+   gb.PutIMsg( cdur );
+
+   var OutLog = MyName + "-" + CurrentVersionObject.CurrentBuild + "-StdOut.txt";
+   var ErrLog = MyName + "-" + CurrentVersionObject.CurrentBuild + "-StdErr.txt";
+
+   Out.StdErr = fso.CreateTextFile( OutLog, true, 0 );// overwrite, ascii
+   Out.StdOut = fso.CreateTextFile( ErrLog, true, 0 );// overwrite, ascii
+   gb.Out.StdErr = Out.StdErr;
+   gb.Out.StdOut = Out.StdOut;
+   gb.UnloadBuffers();
    tobj.Out.StdErr = Out.StdErr;          // redefine Output for the EnumDevicesPartionsVolumesClass
    tobj.Out.StdOut = Out.StdOut;          // redefine Output for the EnumDevicesPartionsVolumesClass
-   dver = tobj.GetVersion();              // get version of CollectionClass
-   Out.StdOut.WriteLine( tClass + " version:" + dver + " will be used." );
 }
 
-//tobj.run( MsgLevel )                   // create all of the objects of EnumDevicesAndPartionsClass
-now = new Date();
-finished = now.getTime();
-
-if ( MsgLevel )
-{
-   gb.UnloadBuffers();
-}
-else
-{
-   tobj.Out.StdOut = Out.StdOut;          // redefine Output for the EnumDevicesPartionsVolumesClass
-}
-
-//tobj.ShowObjects(); // June 27
-tobj.Show();                           // Output report
-//tobj.BriefShow();                      // Output report
-
-var duration, durmilli, durss, durmm, durhh, cdur;
-duration = finished - started;
-
-cdur = duration + " milliseconds";
-
-if ( duration > second )
-{
-   durss = Math.round( duration / second );
-   durmilli = ( duration + 999 ) % second;
-   cdur = durss + "." + durmilli + " seconds";
-}
-
-cdur = tClass + " run continued " + cdur;
-
-Out.StdOut.WriteLine( "--- " + MyName + " finished at " + now.toString() + " ---" );
-Out.StdOut.WriteLine( cdur );
-Out.StdOut.WriteLine( "\n\n" );
-WScript.Echo( cdur );
+tobj.Show();                              // Output report
 
 var Counts = regObj.GetCallCounts();
 
@@ -2858,6 +3109,34 @@ for ( var p in Counts )
    " was used " + Counts[ p ].toString().right( 3, " " ) + " times" );
 }
 
+if ( IsCompetition )
+{
+   var fn = path + "\\DP_Input.txt";
+   var fh = fso.CreateTextFile( fn, true, 0 );// overwrite, ascii
+   fh.WriteLine( "list disk" );
+   for ( var i = 0; i < DevicesCollection.Count; i++ )
+   {
+      fh.WriteLine( "select disk " + i );
+      fh.WriteLine( "detail disk " );
+      fh.WriteLine( "list part" );
+      /*
+      for ( var j = 0; j < DevicesCollection[ i ].NumberOfSV; j++ )
+      {
+         fh.WriteLine( "select part " + j );
+         fh.WriteLine( "detail part" );
+      }
+      */
+   }
+   fh.WriteLine( "list disk" );
+   for ( var i = 0; i < LogicalVolumesCollection.Count; i++ )
+   {
+      fh.WriteLine( "select volume " + i );
+      fh.WriteLine( "detail volume" );
+   }
+   fh.WriteLine( "exit" );
+   fh.close();
+   fh = null;
+}
 if ( fso != null )
 {
    Out.StdErr.close();
